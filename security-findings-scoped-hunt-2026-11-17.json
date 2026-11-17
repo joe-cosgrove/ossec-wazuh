@@ -1,0 +1,49 @@
+{
+  "commit": "0643b5cb8a7f150c3a4823d1a53f8acd80ea5a61",
+  "date": "2026-11-17",
+  "scope": "analysisd json_extended remaining overflows, csyslogd, custom_output, AR scripts, agentlessd, logcollector, os_maild headers, cleanevent/decoders, accumulator/geoip/compiled_rules",
+  "findings": [
+    {
+      "title": "match_regex unbounded totalResults heap OOB write past results[MAX_MATCHES]",
+      "severity": "HIGH",
+      "location": "src/analysisd/format/json_extended.c:match_regex (approx 307-335), called from W_JSON_ParseRootcheck",
+      "description": "match_regex increments totalResults for every regex capture without checking totalResults < MAX_MATCHES (10). Eleven or more {Tag: values} matches in a rootcheck full_log write through results[10+], which were never allocated. Distinct from the known 30-byte-per-slot sprintf overflow.",
+      "impact": "Heap corruption in ossec-analysisd: DoS of alerting/AR/mail/integrations; plausible code execution as ossec.",
+      "attack_path": "1) jsonout_output enabled (install.sh default yes). 2) Registered/compromised agent emits rootcheck alert whose full_log contains >=11 {name: values} tokens. 3) Rule group includes rootcheck. 4) Eventinfo_to_jsonstr -> W_ParseJSON -> W_JSON_ParseRootcheck -> match_regex. 5) Eleventh capture writes results[10].",
+      "evidence": [
+        "src/analysisd/format/json_extended.c:85-86",
+        "src/analysisd/format/json_extended.c:328-330",
+        "src/analysisd/format/json_extended.c:34-35",
+        "src/analysisd/format/to_json.c:233",
+        "install.sh:549",
+        "Local replica: 12 {pci_dss_N: 1.N} tokens trigger results[10] write"
+      ],
+      "remediation": "Guard totalResults < MAX_MATCHES before sprintf; use snprintf(..., MAX_STRING_LESS, ...); truncate or stop after MAX_MATCHES captures."
+    },
+    {
+      "title": "W_JSON_ParseRootcheck fullog[1024] strncpy without NUL termination",
+      "severity": "HIGH",
+      "location": "src/analysisd/format/json_extended.c:W_JSON_ParseRootcheck (approx 82-100)",
+      "description": "strncpy(fullog, lf->full_log, MAX_STRING) leaves fullog unterminated when full_log length >= 1024. match_regex/regexec then reads past the stack buffer. Distinct from the excluded hostname/location strncpy+str_cut bug.",
+      "impact": "Stack over-read / undefined behavior in analysisd; typically crash (DoS) on long rootcheck JSON encoding. Agent messages may be up to OS_MAXSTR (6144).",
+      "attack_path": "1) jsonout_output enabled. 2) Rootcheck alert with attacker-controlled full_log >= 1024 bytes. 3) W_JSON_ParseRootcheck copies without NUL. 4) regexec walks past fullog on the stack.",
+      "evidence": [
+        "src/analysisd/format/json_extended.c:82",
+        "src/analysisd/format/json_extended.c:95",
+        "src/analysisd/format/json_extended.c:98-100",
+        "src/headers/defs.h:33",
+        "Local replica: poisoned 1024-byte fullog after strncpy of 2000-byte source has no NUL; scan continues past 1024"
+      ],
+      "remediation": "Set fullog[MAX_STRING-1] = '\\0' after strncpy, or snprintf(fullog, sizeof(fullog), \"%s\", lf->full_log)."
+    }
+  ],
+  "near_misses": [
+    "ossec-tweeter.sh: quote-break not shell RCE (expansion inside double quotes is not re-parsed)",
+    "Stock AR scripts: CRAFTED_IP/USER regex blocks metacharacters before exec",
+    "csyslogd CEF/Splunk injection via oscap description_append: needs non-default csyslog format",
+    "os_maild Subject/To: default full_subject=0; To from config; location truncated at '>'",
+    "custom_output: fixed search tokens; values only; fprintf to log",
+    "agentlessd/logcollector command: admin config; remote_commands default 0",
+    "accumulator/geoip/compiled_rules/cleanevent: no new MEDIUM+ remote chain"
+  ]
+}
