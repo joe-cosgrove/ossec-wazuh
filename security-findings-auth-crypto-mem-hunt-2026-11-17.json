@@ -1,0 +1,37 @@
+{
+  "repo": "joe-cosgrove/ossec-wazuh",
+  "commit": "3e0901e328113443cdf30b01ec413e826b6112f7",
+  "hunt": "auth-crypto-mem-2026-11-17",
+  "result": "none",
+  "findings": [],
+  "near_misses": [
+    {
+      "title": "wazuh_db agent .db path traversal via name",
+      "why_failed": "OS_IsValidName blocks /; loc2name uses keystore name"
+    },
+    {
+      "title": "RK_File/DB_File/ossecalert location ../ write",
+      "why_failed": "First path component after queue dir is (name) ip-><token>; agents cannot mkdir"
+    },
+    {
+      "title": "W_JSON_ParseGroups strncpy without NUL",
+      "why_failed": "group is rule XML; stock groups << 1024"
+    },
+    {
+      "title": "trim empty / strtok NULL in W_JSON_ParseRootcheck",
+      "why_failed": "Regex guarantees colon; empty trim unreachable without excluded overflow"
+    },
+    {
+      "title": "os_zlib_uncompress off-by-one NUL",
+      "why_failed": "Dest is OS_MAXSTR+1 with max OS_MAXSTR; NUL in-bounds"
+    },
+    {
+      "title": "authd root after chroot",
+      "why_failed": "No new exploit beyond known SSL_read NUL issue"
+    },
+    {
+      "title": "Windows agent srandom(time(0))",
+      "why_failed": "Needs key; folds into excluded static-IV/replay cluster"
+    }
+  ]
+}
