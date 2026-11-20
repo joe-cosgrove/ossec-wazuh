@@ -1,0 +1,27 @@
+{
+  "findings": [
+    {
+      "severity": "high",
+      "location": "active-response/win/netsh.cmd",
+      "title": "Windows AR .cmd scripts expand unsanitized location via unquoted %4, yielding LocalSystem RCE.",
+      "description": "WinExecdRun passes time/ruleid/location/filename as one CreateProcess argument after user/ip. Stock netsh.cmd and restart-ossec.cmd log with ECHO %0 %1 ... %9 unquoted before validating the action. cmd.exe re-parses & | < > after percent expansion. analysisd CRAFTED_* gates only user and srcip; agents control the location suffix after ->. Unlike the already-flagged CreateProcess quote-break, this needs no double-quote in the payload and survives fixes that only correct CreateProcess quoting.",
+      "impact": "Command execution as LocalSystem on Windows agents with active response enabled whenever a forwarded AR embeds a crafted event location (including location=all fan-out from a malicious registered agent).",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Enable AR on Windows agents and configure a manager AR that targets them (all/specific/remote).\n2. Attacker with a registered agent key emits an event whose location suffix contains cmd metacharacters, e.g. x&calc&y.\n3. analysisd fires AR; remoted forwards execd message with raw location inside tmp_msg.\n4. WinExecdRun runs netsh.cmd/restart-ossec.cmd; line 9 expands %4 unquoted; &calc& executes as LocalSystem.",
+      "evidence": [
+        "active-response/win/netsh.cmd:9",
+        "active-response/win/restart-ossec.cmd:9",
+        "src/os_execd/win_execd.c:125-143",
+        "src/os_execd/win_execd.c:208-211",
+        "src/analysisd/alerts/exec.c:83-92",
+        "src/analysisd/analysisd.c:984-1006",
+        "src/remoted/secure.c:286-294",
+        "src/shared/mq_op.c:71-85",
+        "src/client-agent/receiver-win.c:120-125"
+      ],
+      "remediation": "Quote all %n expansions in Windows AR scripts; strip or allowlist location before OS_Exec; omit location from scripts that only need action/user/ip; keep Windows AR disabled unless required.",
+      "poc_video_notes": "No Windows agent or cmd.exe harness in this Linux scan environment. Confirmed by tracing unsanitized lf->location into tmp_msg/%4 and cmd.exe percent-expansion-then-reparse semantics for &."
+    }
+  ]
+}
