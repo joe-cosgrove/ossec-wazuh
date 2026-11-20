@@ -1,0 +1,56 @@
+{
+  "commit": "workspace-master",
+  "date": "2026-11-20",
+  "scope": "analysisd format/to_json, cleanevent, accumulator, plugins, rules comment_append, logcollector command; skip known json_extended/decoders/read-alert items",
+  "findings": [
+    {
+      "title": "doDiff stores stack address of flastcontent in rule->last_events (use-after-return)",
+      "severity": "HIGH",
+      "location": "src/analysisd/dodiff.c:74,147-148 (consumed by src/analysisd/alerts/log.c:408-412)",
+      "description": "When check_diff detects a change, doDiff assigns the stack-local buffer flastcontent to rule->last_events[1] and returns. OS_CheckIfRuleMatch then returns to the main analysis loop, which calls OS_Log/OS_LogOutput and fprintf's last_events with %.1256s. That pointer is no longer valid. Default rule 533 enables check_diff for ossec: output: 'netstat -tan lines.",
+      "impact": "Any registered agent can trigger undefined behavior in ossec-analysisd: stack contents are leaked into alerts.log (and any mail/integrations that consume the alert), and under ASAN/hardening the process aborts. That degrades or takes down alert matching, AR, mailing, and integrations.",
+      "attack_path": "1) Manager runs analysisd with stock ossec_rules.xml (rule 533). 2) Registered agent sends LOCALFILE/SYSLOG-shaped event: ossec: output: 'netstat -tan': ports-A (no syslog date so program_name stays unset; ossec decoder ^ossec: matches). 3) First event creates the diff file; no alert. 4) Agent sends a second differing line. 5) doDiff loads prior content into stack flastcontent, sets last_events[1]=flastcontent, returns. 6) OS_Log dereferences the dangling pointer while writing the level-7 alert.",
+      "evidence": [
+        "src/analysisd/dodiff.c:74",
+        "src/analysisd/dodiff.c:147-148",
+        "src/analysisd/alerts/log.c:408-412",
+        "src/analysisd/alerts/log.c:238-244",
+        "src/analysisd/analysisd.c:1347-1349",
+        "src/analysisd/rules.c:835-841",
+        "etc/rules/ossec_rules.xml:163-168",
+        "etc/ossec_decoders/ossec_decoders.xml:30-33",
+        "Local ASan replica of stack pointer publish + post-return printf: stack-use-after-return"
+      ],
+      "remediation": "strdup/heap-allocate the previous content before storing in last_events, or copy into a heap buffer owned by RuleInfo and free on the next diff. Never store addresses of automatic storage in rule->last_events."
+    },
+    {
+      "title": "Rootcheck JSON parser injects attacker-controlled keys into the rule JSON object",
+      "severity": "MEDIUM",
+      "location": "src/analysisd/format/json_extended.c:W_JSON_ParseRootcheck (approx 102-118)",
+      "description": "For rootcheck-grouped alerts, W_JSON_ParseRootcheck regex-captures {Name: values} from agent-controlled full_log and calls cJSON_AddItemToObject(rule, token, array) with the capture name as the key. Names may be level, comment, sidid, groups, etc. cJSON allows duplicate keys; PrintUnformatted emits both the real numeric level/comment and the attacker array. Short captures avoid the already-reported 30-byte sprintf overflow and trim(NULL) empty-name crash.",
+      "impact": "When jsonout_output is enabled (Wazuh install default), a registered agent can pollute alerts.json rule fields. Downstream SIEM/SOAR parsers that take the last duplicate key or assume level is a number can mis-prioritize alerts or fault on type confusion — alert-stream integrity break, not manager RCE by itself.",
+      "attack_path": "1) jsonout_output yes. 2) Registered agent sends ROOTCHECK_MQ event that fires a rootcheck-group rule (e.g. 510). 3) Log contains a short token such as {level: 999} and/or {comment: pwned}. 4) Eventinfo_to_jsonstr -> W_ParseJSON -> W_JSON_ParseRootcheck adds those keys onto the rule object. 5) alerts.json contains duplicate level/comment keys.",
+      "evidence": [
+        "src/analysisd/format/json_extended.c:97",
+        "src/analysisd/format/json_extended.c:104-107",
+        "src/analysisd/format/to_json.c:233",
+        "src/external/cJSON/cJSON.c:672",
+        "install.sh:549",
+        "etc/rules/ossec_rules.xml:61-72",
+        "Local cJSON replica printed {\"rule\":{\"level\":7,\"comment\":\"real\",\"level\":[\"999\"],\"comment\":[\"pwned\"]}}"
+      ],
+      "remediation": "Allowlist compliance key names (e.g. PCI_DSS, CIS) or nest captures under a fixed compliance object. Reject keys that collide with reserved rule fields (level, comment, sidid, groups, frequency, firedtimes, info, cve)."
+    }
+  ],
+  "near_misses": [
+    "logcollector command=: remote_commands defaults to 0; command= from agent.conf rejected unless accept_remote=1",
+    "rules.c description_append / comment_append: data path into alerts; integrator RCE via ruledescription already reported",
+    "sonicwall category strncpy(7) without NUL: real bug, but strcmp targets are short literals so OOB read not reached in practice",
+    "ossecalert AGENTINFO_DIR fopen with hostname/location: path traversal needs missing intermediate directories (same class as skipped RK/DB_File)",
+    "accumulator.c: key snprintf bounded; oversized keys skipped; hostname set for agent events",
+    "trim(\"\") stack underflow: latent in trim(), but strtok never returns empty tokens in W_JSON_ParseRootcheck",
+    "FTS AddtoIGnore newline injection: stock <ignore> rules use srcip/id; IGnore strcmp also fails due to fgets newline",
+    "doDiff path join: agent hostname path uses only remoted agent name inside parentheses",
+    "Previously reported and skipped: json_extended 30-byte, trim(NULL), hostname/location strncpy, match_regex totalResults, fullog strncpy, ossecalert rule impersonation, RK_File OOB, RK/DB path traversal, GetAlertData Rule:/** Alert smuggling"
+  ]
+}
