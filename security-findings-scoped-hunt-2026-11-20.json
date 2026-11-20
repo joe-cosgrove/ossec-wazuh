@@ -1,0 +1,106 @@
+{
+  "commit": "12bd70ed",
+  "date": "2026-11-20",
+  "scope": "active-response scripts (excl. ossec-slack.sh), os_execd, analysisd/alerts/exec.c, wm_exec/wm_oscap/oscap.py, logcollector read_command, agentlessd, custom_output_search_replace",
+  "excluded_known": [
+    "integrator location RCE",
+    "exec.c [id] AR misclassification",
+    "ossec-dbd SQLi",
+    "authd no -P",
+    "win_execd location CreateProcess",
+    "maild SMTP DATA",
+    "ossec-slack.sh ALERTFULL",
+    "ruleset zip-slip",
+    "TCP length overflow",
+    "verify_msg_id replay",
+    "json rootcheck 30-byte + unbounded totalResults",
+    "ossecalert impersonation",
+    "UnmergeFiles traversal",
+    "agent-auth no -v",
+    "Windows FILE_UPDATE backslash",
+    "description_append OpenSCAP integrator RCE",
+    "JSON hostname/location strncpy",
+    "RK_File/DB_File location fopen"
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/agentlessd/scripts/ssh.exp",
+      "title": "Agentless SSH auto-accepts host keys while ossec cannot persist known_hosts, enabling perpetual MITM password theft",
+      "description": "Shipped agentless Expect scripts answer 'yes' to SSH host-key prompts and then send the cleartext password from .passlist. ossec-agentlessd drops privileges to user ossec (home=/var/ossec) and does not chroot, but make install creates /var/ossec/.ssh as mode 0700 owned by root, so the ossec user cannot create or update known_hosts. OpenSSH therefore re-prompts on essentially every connection; the Expect hook accepts every new key. An on-path attacker between the manager and an agentless target presents any host key, receives the SSH password (and optional su password), and can impersonate or access the monitored host. This is distinct from agent-auth skipping TLS verify: different protocol, different secrets (third-party SSH/su credentials), and the root-only .ssh directory makes TOFU permanent rather than first-use only.",
+      "impact": "When agentless monitoring with password authentication is enabled, a network MITM steals SSH and optional su credentials for monitored hosts (often routers/firewalls/servers). That is cross-trust compromise of those systems from a manager-side foothold on the path, without needing a registered agent key.",
+      "verified": true,
+      "attack_path": "1. Operator enables ossec-agentlessd and registers password-auth hosts via register_host.sh (passwords in agentless/.passlist).\n2. agentlessd runs as user ossec after setgid/setuid; home directory is /var/ossec; /var/ossec/.ssh is root:ossec mode 0700 (group has no r-x).\n3. Periodic check runs expect script: spawn ssh $hostname.\n4. Attacker on the path presents an SSH server; host-key prompt matches '*sure you want to continue connecting*'.\n5. ssh.exp sends 'yes', then sends $pass from .passlist (and su.exp may send $addpass).\n6. Attacker captures credentials and can log into the real target or keep the session.",
+      "evidence": [
+        "src/agentlessd/scripts/ssh.exp:23-27",
+        "src/agentlessd/scripts/ssh.exp:46-48",
+        "src/agentlessd/scripts/ssh_nopass.exp:18-21",
+        "src/agentlessd/scripts/main.exp:84-87",
+        "src/agentlessd/scripts/su.exp:21-22",
+        "src/agentlessd/main.c:129-147",
+        "src/init/adduser.sh:69-75",
+        "src/Makefile:434"
+      ],
+      "remediation": "Pass StrictHostKeyChecking=yes (or accept-new only after an out-of-band pin) and UserKnownHostsFile to a path writable by the agentlessd user. Install .ssh as 0700 ossec:ossec (or whatever user agentlessd runs as). Remove the Expect branch that answers 'yes' to new host keys; fail closed on unknown or changed keys. Prefer key-based auth and disable password entries in .passlist where possible.",
+      "why_distinct": "Not in the excluded list. Distinct from agent-auth TLS verify skip (#14): agentless SSH password/su secrets for third-party hosts, plus root-owned 0700 .ssh making auto-accept perpetual."
+    }
+  ],
+  "near_misses": [
+    {
+      "candidate": "host-deny.sh tcp_wrappers third-field (:allow / spawn)",
+      "why_failed": "CRAFTED_IP allows ':' and letters so evil.com:allow can be written; modern libwrap needs 'spawn' and spaces//' which CRAFTED_IP blocks; host-deny also requires a '.' in IP. Incomplete reliable RCE; AR self-bypass only."
+    },
+    {
+      "candidate": "ossec-tweeter.sh ALERTFULL quote/command-substitution",
+      "why_failed": "Parameter expansion inside double quotes does not re-parse quotes/$()/backticks (unlike excluded ossec-slack.sh). Verified in prior hunts."
+    },
+    {
+      "candidate": "firewall-drop.sh eval on BSD/AIX",
+      "why_failed": "IP reaches eval only after CRAFTED_IP; shell metacharacters blocked."
+    },
+    {
+      "candidate": "ip-customblock /ipblock/${IP} traversal",
+      "why_failed": "'/' not in CRAFTED_IP; '..' alone cannot escape to a useful write."
+    },
+    {
+      "candidate": "disable-account.sh USER starting with '-'",
+      "why_failed": "CRAFTED_USER allows leading '-'; passwd option confusion possible but no clear cross-user lock/root impact with a complete reliable chain; command not bound by default AR."
+    },
+    {
+      "candidate": "route-null.sh srcip=default",
+      "why_failed": "Would blackhole default route, but route-null is not in default active-response bindings (only host-deny/firewall-drop)."
+    },
+    {
+      "candidate": "exec.c remote branch snprintf filename=NULL",
+      "why_failed": "Real bug when FILENAME not expected; glibc often prints '(null)' rather than crashing; libc-dependent DoS only."
+    },
+    {
+      "candidate": "custom_output_search_replace / OS_CustomLog",
+      "why_failed": "Search tokens fixed; agent data is replacement values; output is fprintf to alert log, not a shell sink."
+    },
+    {
+      "candidate": "wm_exec / wm_oscap / oscap.py command injection",
+      "why_failed": "Command line from wodle XML only; Unix execve; oscap.py shell=False. Agent events do not reach wm_exec."
+    },
+    {
+      "candidate": "logcollector read_command/full_command popen",
+      "why_failed": "Command from localfile config; remote_commands defaults to 0."
+    },
+    {
+      "candidate": "agentlessd options unquoted in popen / $args remote shell",
+      "why_failed": "options/host/type come from admin ossec.conf only."
+    },
+    {
+      "candidate": "register_host.sh chmod 744 .passlist",
+      "why_failed": "Parent agentless/ and PREFIX are 0550 root:ossec; world cannot traverse. ossec group can already read other secrets."
+    },
+    {
+      "candidate": "RK_File/DB_File location ../ re-verify",
+      "why_failed": "After remoted+CleanMSG, path is queue/.../(name) ip->suffix; first component '(name) ip->..' must exist as a directory — agents cannot mkdir there; fopen fails. No different remote path found."
+    },
+    {
+      "candidate": "prefilter_cmd + popen(fname)",
+      "why_failed": "Requires admin <prefilter_cmd>; filename from local monitored tree."
+    }
+  ]
+}
