@@ -1,0 +1,61 @@
+{
+  "hunt": "ossec-wazuh-scoped-memsafe-crypto-protocol-2026-11-20",
+  "commit": "cae5d89028f2cd54e937e3ef013c5b15c4957ef2",
+  "result": "2 NEW (1 HIGH + 1 MEDIUM)",
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/logcollector/read_snortfull.c",
+      "title": "snort-full reader signed f_msg_size underflow yields strncat stack overflow.",
+      "description": "read_snortfull tracks remaining space in a signed int f_msg_size. After a first [**] [ line of length >= 6105, f_msg_size drops below 40. The preprocessor/date branch then calls strncat(f_msg, ++q, f_msg_size - 40) with a negative length, which becomes a huge size_t and overflows the stack buffer f_msg[OS_MAXSTR+1]. Classification/Priority paths can similarly drive f_msg_size negative before the third-line strncat.",
+      "impact": "Crash or likely code execution in ossec-logcollector whenever snort-full localfile monitoring is enabled and an attacker can write the monitored file (or influence Snort to emit a long first line plus a date-shaped follow-up).",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Operator configures <localfile><log_format>snort-full</log_format><location>PATH</location></localfile>.\n2. Attacker writes PATH with a >=6105-byte line starting with [**] [ and a second line matching MM/DD-... with a space.\n3. logcollector read_snortfull subtracts into a negative f_msg_size and strncat overflows f_msg.\n4. Process crashes or attacker-controlled stack corruption runs as the logcollector user.",
+      "evidence": [
+        "src/logcollector/read_snortfull.c:17-64",
+        "src/logcollector/read_snortfull.c:86-90",
+        "src/logcollector/logcollector.c:176-177",
+        "src/config/localfile-config.c:267-268",
+        "src/headers/defs.h:33"
+      ],
+      "remediation": "Use size_t for remaining capacity; abort the event (or truncate safely) when remaining < bytes to append; never pass (f_msg_size - N) when f_msg_size < N.",
+      "poc_video_notes": "Built a minimal two-line PoC log demonstrating f_msg_size=38 then strncat n=-2. No live logcollector was crashed in this at-rest environment."
+    },
+    {
+      "severity": "medium",
+      "location": "src/analysisd/dodiff.c",
+      "title": "doDiff joins unsanitized syslog hostname into /queue/diff path, enabling chroot write escape.",
+      "description": "When lf->hostname does not start with '(', doDiff snprintfs DIFF_DIR/hostname/sigid/last-entry. hostname_map allows '/'. Stock rule 533 check_diff matches ossec: output: 'netstat -tan, and the ossec decoder prematches ^ossec: , so a syslog UDP/TCP event with a traversal hostname and that body triggers _add2last mkdir/fopen/fwrite outside /queue/diff under the analysisd chroot.",
+      "impact": "Unauthenticated (when syslog remote + allowips permits the source) write of attacker log bytes to attacker-chosen directories under the OSSEC chroot as ossecr. Basename is fixed as last-entry under <sigid>/.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Operator enables remoted connection syslog with allowips including the attacker (or uses the already-reported dotted-quad netmask ACL bypass).\n2. Attacker sends syslog: '<pri>Mon DD HH:MM:SS ../../tmp/pwn ossec: output: 'netstat -tan': crafted\\n'.\n3. analysisd decodes as ossec, rule 533 check_diff runs doDiff.\n4. File /tmp/pwn/533/last-entry (in chroot) is created with attacker content.",
+      "evidence": [
+        "src/analysisd/dodiff.c:14-66",
+        "src/analysisd/dodiff.c:81-102",
+        "src/os_regex/os_regex_maps.c:13-22",
+        "etc/ossec_decoders/ossec_decoders.xml:30-32",
+        "etc/rules/ossec_rules.xml:163-167",
+        "src/analysisd/cleanevent.c:127-128"
+      ],
+      "remediation": "Sanitize hostname for path use (reject '/', '..', and non-allowlisted bytes) or hash/encode it before joining under DIFF_DIR.",
+      "poc_video_notes": "Validated by tracing syslog CleanMSG hostname assignment into doDiff path join and _add2last mkdir/fwrite. Default configs use secure-only remote, so syslog must be enabled."
+    }
+  ],
+  "near_misses": [
+    "DB_File location ../ blocked by (name) ip-> prefix + missing intermediate dirs; MAX_AGENTS bounded",
+    "Agent name .. doDiff /queue/../sigid limited blast",
+    "seechanges report_changes not default; filter escapes system(diff)",
+    "UnmergeFiles ../ needs hand-crafted merged.mg",
+    "Win FILE_UPDATE backslash already reported",
+    "authd SSL_read unterminated near-miss",
+    "Blowfish static IV alone",
+    "os_zlib NUL already reported",
+    "OS_RecvConnUDP test-only",
+    "logcollector remote_commands=0",
+    "os_xml no XXE",
+    "plugin decoders field-only",
+    "TCP length / !id! / syslogtcp r_sz already reported"
+  ]
+}
