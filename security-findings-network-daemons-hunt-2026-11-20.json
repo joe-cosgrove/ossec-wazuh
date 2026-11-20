@@ -1,0 +1,58 @@
+{
+  "hunt": "ossec-wazuh-network-daemons-2026-11-20",
+  "commit": "6560c7b0",
+  "scope": [
+    "src/remoted (beyond known UINT_MAX leftover-colon, syslogtcp r_sz=0, verify_msg_id=0, OS_IsValidIP netmask)",
+    "src/os_auth (beyond known POOL_SIZE break/exit)",
+    "src/os_crypto",
+    "src/client-agent",
+    "src/addagent"
+  ],
+  "result": "1 NEW HIGH",
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/client-agent/receiver-win.c",
+      "title": "Windows FILE_UPDATE sanitization only strips '/', so backslash ..\\ escapes shared/ for arbitrary SYSTEM file write",
+      "description": "When a Windows agent receives an authenticated FILE_UPDATE control message, receiver-win.c replaces '/' with '-' and flips a leading '.', then fopen(SHAREDCFG_DIR/name, \"w\"). Backslash is not sanitized. On Windows, fopen treats '\\' as a path separator, so names such as ..\\ossec.conf or ..\\..\\..\\Users\\Public\\evil.exe resolve outside shared/. The attacker also controls the declared MD5 and the following payload bytes, so the close-path MD5 check passes. This is distinct from the already-reported UnmergeFiles member-name traversal: prior analysis assumed FILE_UPDATE name sanitization was sufficient for the download path; the '/' -only filter is bypassed with '\\' before UnmergeFiles is ever involved. Linux agents are unaffected ('\\' is not a separator).",
+      "impact": "An attacker who can impersonate the manager to a Windows agent (stolen/enrolled agent key, or MITM after key theft) can write arbitrary files as LocalSystem — overwrite ossec.conf, plant autoruns under Users\\Public / startup locations, or replace agent binaries — fully compromising the endpoint and disabling HIDS.",
+      "verified": true,
+      "status": "active",
+      "background_composer_id": "bc-8a568cfd-ee50-5d5b-a713-d90f59633309",
+      "commit_hash": "6560c7b0",
+      "detected_at_pst": "2026-11-20T10:21:00-08:00",
+      "reported_link": "",
+      "attack_path": "1. Attacker obtains a Windows agent key (compromised endpoint, open authd enrollment, or prior key theft).\n2. Attacker speaks the secure channel as the manager (UDP/TCP 1514) and sends a control frame: #!-up file <md5> ..\\ossec.conf\\n (or deeper ..\\ chains).\n3. receiver-win.c leaves backslashes intact; fopen(\"shared/..\\\\ossec.conf\") opens the agent install's ossec.conf (ntpath resolves to the agent root).\n4. Attacker sends payload frames (non-header) that fprintf into that FILE*.\n5. Attacker sends #!-close file ; OS_MD5_File matches the attacker-supplied sum; the written file is kept (basename is not merged.mg, so UnmergeFiles is skipped).\n6. Agent now runs attacker-controlled config/binary content as LocalSystem.",
+      "evidence": [
+        "src/client-agent/receiver-win.c:148-188",
+        "src/client-agent/receiver-win.c:191-230",
+        "src/client-agent/receiver.c:149-161",
+        "src/headers/defs.h:239-244",
+        "src/headers/rc.h:24",
+        "src/remoted/manager.c:284-286"
+      ],
+      "remediation": "Reject FILE_UPDATE names containing '\\\\', '/', '..', or drive prefixes. Allowlist [A-Za-z0-9._-]+ and write only basename under SHAREDCFG_DIR. Prefer open() with O_NOFOLLOW on a directory fd. Apply the same checks on Linux for defense in depth.",
+      "poc_video_notes": "No Windows agent lab in this environment. Confirmed by reading the '/' -only sanitization and simulating ntpath.normpath('shared/..\\\\ossec.conf') -> 'ossec.conf' and deeper chains to Users\\\\Public."
+    }
+  ],
+  "excluded_known": [
+    "plaintext !id! UINT_MAX decrypt leftover-colon",
+    "syslogtcp OS_RecvTCPBuffer returns 0 -> strncat overflow",
+    "verify_msg_id=0 replay",
+    "authd POOL_SIZE break/exit",
+    "OS_IsValidIP dotted-quad netmask ACL bypass",
+    "Blowfish static IV (no new distinct attack beyond replay)",
+    "authd no -P open enrollment",
+    "agent-auth no -v MITM",
+    "authd password logged",
+    "authd SSL_read unterminated buffer",
+    "UnmergeFiles ../ member path traversal",
+    "TCP signed length prefix overflow"
+  ],
+  "near_misses": [
+    "OS_FreeKeys sleep(1) without synchronizing wait_for_msgs keyentries access — narrow UAF window during key reload",
+    "authd parallel OS_AddNewAgent TempFile/rename race — lost enrollments, not clean key confusion",
+    "FormatID sprintf into short strdup from manage_agents -e — local admin tool only",
+    "syslogtcp unbounded fork from allowed-ips — DoS dominated by known r_sz=0 overflow on same surface"
+  ]
+}
