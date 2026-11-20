@@ -1,0 +1,71 @@
+{
+  "commit": "1b58546cc9616ba7aaade65ad02e3869f01e98f1",
+  "hunt_date_utc": "2026-11-20",
+  "scope": [
+    "src/remoted/",
+    "src/os_auth/",
+    "src/os_crypto/",
+    "src/client-agent/",
+    "src/os_net/"
+  ],
+  "exclusions_honored": [
+    "plaintext !id! leftover colon UINT_MAX decrypt overflow",
+    "syslogtcp OS_RecvTCPBuffer returns 0 overflow",
+    "remoted.verify_msg_id=0 replay",
+    "OS_IsValidIP dotted-quad netmask ACL bypass",
+    "authd pool exhaustion DoS",
+    "Blowfish static IV alone"
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "id": "HIGH-1",
+      "title": "client-agent TCP length prefix has no bounds check; positive oversized frames overflow stack before crypto",
+      "location": "src/client-agent/receiver.c:45-52; receiver-win.c:80-88; start_agent.c:163-166",
+      "description": "Agent TCP path reads a plaintext int32_t netsize_t length then recv()s that many bytes into char buffer[OS_MAXSTR+1] with no check that 1 <= length <= OS_MAXSTR. Remoted rejects length > OS_MAXSTR (still misses <=0). Agent accepts positive lengths remoted would drop (e.g. 7000), overflowing the stack buffer before ReadSecMSG/Blowfish. Framing is unauthenticated relative to the agent key.",
+      "impact": "On-path/MITM or manager-IP redirect attacker causes agent crash; plausible code execution. Windows agent runs as LocalSystem; Linux as ossec in chroot.",
+      "attack_path": "1. Agent uses TCP to manager.\n2. Attacker MITMs or redirects agent TCP session.\n3. Send int32 length=7000 (or -1) then payload.\n4. recv writes past stack buffer before any decrypt/auth.\n5. Crash / memory corruption in agent process.",
+      "evidence": [
+        "src/headers/shared.h:104",
+        "src/client-agent/receiver.c:39-57",
+        "src/client-agent/receiver-win.c:74-93",
+        "src/client-agent/start_agent.c:162-171",
+        "src/remoted/secure.c:155"
+      ],
+      "remediation": "Require length > 0 && length <= OS_MAXSTR (and <= sizeof(buffer)-1) before recv; close socket on violation. Fix remoted length <= 0 as well.",
+      "verified": true,
+      "distinct_from": "Remoted signed length gap (upper bound exists). This is agent-side zero validation including positive oversized frames."
+    },
+    {
+      "severity": "high",
+      "id": "HIGH-2",
+      "title": "remoted secure TCP unbounded accepts + ErrorExit on accept failure enables unauthenticated daemon kill",
+      "location": "src/remoted/secure.c:132-146",
+      "description": "Secure TCP remoted accept()s every connection into epoll with no connection cap and no idle timeout. When accept fails after FD exhaustion (EMFILE/ENFILE), ErrorExit(ACCEPT_ERROR) terminates remoted. Syslog-TCP continues on accept failure; secure TCP does not.",
+      "impact": "Unauthenticated attacker holding ~ulimit TCP connections kills remoted; all agents lose the manager channel until external restart.",
+      "attack_path": "1. Manager runs secure remoted with protocol tcp.\n2. Attacker opens and holds many TCP connections to remoted, sending no data.\n3. FD table exhausts; accept returns -1.\n4. ErrorExit kills remoted.",
+      "evidence": [
+        "src/remoted/secure.c:133-136",
+        "src/remoted/secure.c:143-146",
+        "src/error_messages/error_messages.h:94",
+        "src/remoted/syslogtcp.c:174-177",
+        "src/config/remote-config.c:211-214"
+      ],
+      "remediation": "Log and continue on recoverable accept errors; cap unauthenticated connections; set idle timeouts; never ErrorExit for EMFILE/ENFILE/EINTR/ECONNABORTED on the live accept loop.",
+      "verified": true
+    }
+  ],
+  "near_misses": [
+    "Remoted signed TCP length <=0 (related known class)",
+    "AR-forward unix-queue trust (local ossec-group IPC)",
+    "manager merge path traversal (readdir/basename only)",
+    "agent.conf protocol injection (no agent upload path)",
+    "key-request protocol (absent in tree)",
+    "agent-auth missing -v (prior report)",
+    "check_cert CN=* wildcards (needs pathological CA cert)",
+    "authd SSL_read NUL / root after chroot",
+    "UnmergeFiles / win FILE_UPDATE (prior)",
+    "GetRandomNoise strdup NUL truncate",
+    "Blowfish static IV without new forge path"
+  ]
+}
