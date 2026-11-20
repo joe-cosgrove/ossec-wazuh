@@ -1,0 +1,25 @@
+{
+  "commit": "1b58546cc9616ba7aaade65ad02e3869f01e98f1",
+  "date": "2026-11-20",
+  "scope": "analysisd (decoders/format/alerts/accumulator/fts/lists/dodiff/stats/output) + logcollector (excl. known snortfull/multiline)",
+  "result": "none",
+  "findings": [],
+  "near_misses": [
+    "read_nmapg final_msg_s negative guarded by <27",
+    "mysql/pgsql/mssql room checks hold",
+    "djb strncpy source shorter than OS_MAXSTR",
+    "win_el size_left negative skips strcat",
+    "sonicwall category strncpy — strcmp short literals",
+    "accumulator key truncation / hostname NULL guarded",
+    "FTS/IGnore newline — IGnore strcmp broken",
+    "hostinfo/FTS unbounded growth — DoS class only",
+    "lists malloc(vlen) no NUL — no stock address match_value rules",
+    "RULE_DYNAMIC NULL field — custom rules only",
+    "custom_output cross-token injection — alert text only",
+    "json_extended groups/timestamp — admin or impractical",
+    "picviz quotes — compile-flag optional",
+    "command= remote_commands=0",
+    "getloglocation uses localtime",
+    "doDiff agent name .. — limited blast"
+  ]
+}
