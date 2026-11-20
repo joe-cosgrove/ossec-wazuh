@@ -1,0 +1,73 @@
+{
+  "hunt": "ossec-wazuh-memsafe-protocol-2026-11-20",
+  "commit": "ec156bb8f99110d36bb0885fa4a8b1775c911d05",
+  "result": "3 validated (2 HIGH + 1 MEDIUM)",
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/client-agent/receiver.c",
+      "title": "Agent TCP length prefix completely unchecked → stack overflow before crypto",
+      "description": "On TCP, the agent reads a plaintext int32_t length then recv()s that many bytes into buffer[OS_MAXSTR+1] with no check that 1 <= length <= OS_MAXSTR. Remoted rejects length > OS_MAXSTR; the agent rejects nothing. Framing is processed before Blowfish/ReadSecMSG. Positive oversized lengths (e.g. 7000) that remoted would drop overflow the agent stack. length==OS_MAXSTR+1 also makes buffer[recv_b]='\\0' one past the array in receiver.c.",
+      "impact": "Crash or likely code execution as the agent user (Linux ossec/chroot; Windows LocalSystem) without the agent key — only MITM or manager-channel injection on TCP framing.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Agent uses protocol tcp.\n2. Attacker is on-path or spoofs the manager.\n3. Send 4-byte LE length 7000 then >=7000 payload bytes.\n4. receive_msg/start_agent overflows buffer[OS_MAXSTR+1] before crypto.",
+      "evidence": [
+        "src/headers/shared.h:104",
+        "src/client-agent/receiver.c:45-67",
+        "src/client-agent/receiver-win.c:80-88",
+        "src/client-agent/start_agent.c:163-166",
+        "src/remoted/secure.c:155"
+      ],
+      "remediation": "Require length > 0 && length <= OS_MAXSTR (and <= sizeof(buffer)-1 before NUL). Close socket on violation. Add the same lower bound in remoted."
+    },
+    {
+      "severity": "high",
+      "location": "src/os_csyslogd/csyslogd.c",
+      "title": "csyslogd field_add_string/truncated stack off-by-one and heap overflow on near-full alert buffer",
+      "description": "OS_Alert_SendSyslog builds into char syslog_msg[OS_SIZE_2048] (exactly 2048 bytes). After a large snprintf of location/comment, strlen can be 2047 so dest_sz/available_sz=1. field_add_string then strncat(dest, buffer, 1) writes a NUL at index 2048 (past the array). field_add_truncated with available_sz in {1,2,3} mallocs a 1–3 byte buffer, os_substr refuses non-positive length, then strcat(truncated, \"...\") overflows the heap chunk. Agent-controlled alert location/log can inflate the initial snprintf.",
+      "impact": "Stack off-by-one and/or small-heap overflow in ossec-csyslogd: crash (DoS of syslog forwarding) or plausible code execution as the csyslogd user when syslog_output is enabled.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Enable <syslog_output>.\n2. Registered agent produces alerts whose location/comment/log fill the 2047-byte header snprintf.\n3. Later field_add_string/truncated run with available_sz in {1,2,3}.\n4. Stack and/or heap corrupted.",
+      "evidence": [
+        "src/os_csyslogd/alert.c:23",
+        "src/os_csyslogd/alert.c:97-116",
+        "src/os_csyslogd/csyslogd.c:88-110",
+        "src/os_csyslogd/csyslogd.c:114-156",
+        "src/shared/string_op.c:63-70"
+      ],
+      "remediation": "Size syslog_msg as OS_SIZE_2048+1 or pass sizeof. Use remaining=size-strlen(dest)-1. In field_add_truncated require field_sz > strlen(trailer) before strcat; prefer snprintf into the heap buffer."
+    },
+    {
+      "severity": "medium",
+      "location": "src/analysisd/dodiff.c",
+      "title": "doDiff joins unsanitized syslog hostname into /queue/diff path enabling chroot write escape",
+      "description": "When lf->hostname does not start with '(', doDiff snprintfs DIFF_DIR/hostname/sigid/last-entry. hostname_map allows '/'. Stock rule 533 check_diff matches ossec: output: 'netstat -tan, and the ossec decoder prematches ^ossec: , so a syslog event with a traversal hostname and that body triggers _add2last mkdir/fopen/fwrite outside /queue/diff under the analysisd chroot. Distinct from the excluded last_events stack UAF.",
+      "impact": "Unauthenticated (when syslog remote + allowips permits) write of attacker log bytes under the OSSEC chroot as ossecr. Basename fixed as last-entry under <sigid>/.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Enable remoted connection syslog with allowips including attacker.\n2. Send syslog with hostname ../../tmp/pwn and body ossec: output: 'netstat -tan': crafted.\n3. Rule 533 check_diff runs doDiff.\n4. Chroot path /tmp/pwn/533/last-entry is written.",
+      "evidence": [
+        "src/analysisd/dodiff.c:14-66",
+        "src/analysisd/dodiff.c:81-102",
+        "src/os_regex/os_regex_maps.c:13-22",
+        "etc/ossec_decoders/ossec_decoders.xml:30-32",
+        "etc/rules/ossec_rules.xml:163-167",
+        "src/analysisd/cleanevent.c:127-128"
+      ],
+      "remediation": "Sanitize hostname for path use (reject '/', '..', non-allowlisted bytes) or hash/encode before joining under DIFF_DIR."
+    }
+  ],
+  "near_misses": [
+    "create_db PATH_MAX-dir_size-2 underflow unreachable on Linux (max dir-with-child ~4093 vs threshold 4095)",
+    "prefilter_cmd popen unquoted fname needs admin prefilter_cmd",
+    "UnmergeFiles ../ already reported",
+    "Win FILE_UPDATE backslash already reported",
+    "json_extended fullog/totalResults prior hunt; adjacent to excluded 30-byte/trim",
+    "RK_File/DB_File/ossecalert ../ needs intermediate dir",
+    "authd SSL_read unterminated; Blowfish static IV; zlib NUL in-bounds",
+    "nmapg/mysql/pgsql/mssql/djb readers guarded",
+    "plugin decoders field-only; maild Subject CRLF default-safe"
+  ]
+}
