@@ -1,0 +1,40 @@
+{
+  "hunt": "ossec-wazuh-auth-crypto-2026-11-20",
+  "commit": "1bf240ddbcb1a5557b480459762d0ba662715dcc",
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/shared/validate_op.c",
+      "title": "OS_IsValidIP dotted-quad netmask uses network address as mask, bypassing remoted allowed-ips and related ACL checks",
+      "description": "In the full-netmask branch of OS_IsValidIP (a.b.c.d/w.x.y.z), after splitting on '/', nmask is assigned with inet_addr(ip_address) instead of inet_addr(tmp_str). Only mask 255.255.255.255 is special-cased correctly. CIDR /N forms are fine. Configured allowed-ips such as 10.0.0.0/255.255.255.0 therefore store netmask=10.0.0.0, so OS_IPFound accepts large unrelated client ranges. Same parser feeds denied-ips, agent IP binding (OS_IsAllowedDynamicID), and AR white_list.",
+      "impact": "When syslog remoted uses dotted-quad allowed-ips, unauthenticated peers outside the intended subnet can inject syslog events into analysisd. Agent IP restrictions written with dotted masks can also be bypassed by a key holder from unexpected addresses.",
+      "verified": true,
+      "attack_path": "1. Operator enables remoted syslog with allowed-ips using dotted mask (supported by ip_address_regex).\n2. OS_IsValidIP stores wrong netmask.\n3. Attacker sends/spoofs syslog from an IP that matches the broken mask check but not the intended /24.\n4. OS_IPNotAllowed returns allow; event enters DEFAULTQUEUE as SYSLOG_MQ.",
+      "evidence": [
+        "src/shared/validate_op.c:17-19",
+        "src/shared/validate_op.c:332-366",
+        "src/shared/validate_op.c:223-244",
+        "src/config/remote-config.c:160-174",
+        "src/remoted/syslog.c:94-98",
+        "src/remoted/syslogtcp.c:179-183"
+      ],
+      "remediation": "Set nmask from inet_addr(tmp_str). Add regression tests for dotted masks vs adjacent and distant IPs."
+    },
+    {
+      "severity": "medium",
+      "location": "src/os_auth/main-server.c",
+      "title": "authd terminates on enrollment pool exhaustion instead of rejecting excess clients",
+      "description": "When active_processes >= POOL_SIZE (512), the accept loop breaks out of while(1) and clean_exit shuts down the daemon. Held TCP connections keep children in SSL_accept/SSL_read while the parent still counts them toward the pool.",
+      "impact": "Unauthenticated network peers can permanently stop ossec-authd until an external process restarts it, denying agent enrollment.",
+      "verified": true,
+      "attack_path": "1. Reach TCP 1515.\n2. Open and hold 512 connections so children block in SSL handshake/read.\n3. Trigger one more accept; parent hits pool check and break.\n4. clean_exit ends authd.",
+      "evidence": [
+        "src/headers/defs.h:39",
+        "src/os_auth/main-server.c:358-384",
+        "src/os_auth/main-server.c:401-419",
+        "src/os_auth/main-server.c:571-572"
+      ],
+      "remediation": "On pool exhaustion close the new client socket and continue the listen loop; do not break/exit."
+    }
+  ]
+}
