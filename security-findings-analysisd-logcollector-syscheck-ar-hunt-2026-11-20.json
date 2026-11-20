@@ -1,0 +1,64 @@
+{
+  "hunt": "ossec-wazuh-analysisd-logcollector-syscheck-ar-2026-11-20",
+  "commit": "1b58546cc9616ba7aaade65ad02e3869f01e98f1",
+  "result": "2 NEW (1 HIGH + 1 MEDIUM)",
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/logcollector/read_multiline.c",
+      "title": "Multiline log reader size_t underflow yields strncpy stack overflow.",
+      "description": "read_multiline accumulates lines into stack buffer[OS_MAXSTR+1] with strncpy(buffer+buffer_size, str, OS_MAXSTR-buffer_size-2) after inserting a space. When log_format is multiline:N with N>=3, two maximum-length lines leave buffer_size near OS_MAXSTR; the third line wraps the remaining-length expression to a huge size_t and overflows the stack buffer. Distinct from the already-reported read_snortfull signed f_msg_size underflow.",
+      "impact": "Crash or likely code execution in ossec-logcollector whenever multiline localfile monitoring (N>=3) is enabled and an attacker can write the monitored file.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Operator configures <localfile><log_format>multiline:3</log_format><location>PATH</location></localfile>.\n2. Attacker writes PATH with three lines each >= ~5887 bytes (fgets limit OS_MAXSTR-OS_LOG_HEADER) without early newlines.\n3. On the third accumulation, OS_MAXSTR-buffer_size-2 underflows; strncpy writes past buffer.\n4. logcollector crashes or stack corruption runs as the logcollector user.",
+      "evidence": [
+        "src/logcollector/read_multiline.c:66-72",
+        "src/logcollector/logcollector.c:203",
+        "src/config/localfile-config.c:279-280",
+        "src/headers/defs.h:33-37"
+      ],
+      "remediation": "Track remaining capacity as size_t; abort/truncate when buffer_size+1+strlen(str) >= OS_MAXSTR; always force a trailing NUL after strncpy.",
+      "poc_video_notes": "Local C replica of the accumulation loop showed L3 n=2^64-1 after two max lines; ASan aborted on a bounded OOB write at buffer+6143. No live logcollector was crashed in this at-rest environment."
+    },
+    {
+      "severity": "medium",
+      "location": "src/analysisd/dodiff.c",
+      "title": "doDiff joins unsanitized hostname into DIFF_DIR path (ASL Host /), distinct from UAF and ossecalert.",
+      "description": "doDiff snprintfs DIFF_DIR/hostname/sigid/last-entry and _add2last mkdir/fopen/fwrite without rejecting '/' or '..'. hostname_map also allows '/'. Traditional syslog 'host ossec: output:…' does NOT reach stock rule 533 because CleanMSG strips ossec as program_name and breaks decoder ^ossec: . Reachable via OSX ASL framing: [Message ossec: output: 'netstat -tan': …] keeps lf->log for rules 530/533 while [Host ../../etc/shared] sets lf->hostname with no hostname_map filter. Distinct from doDiff last_events UAF and from ossecalert AGENTINFO_DIR fopen. Secure-agent paren branch only uses alphanumeric OS_IsValidName.",
+      "impact": "When syslog remoted (or ASL localfile) is enabled, attacker-controlled create/overwrite of …/<sigid>/last-entry under attacker-influenced directories inside the analysisd chroot (e.g. etc/shared/533/last-entry) as ossecr.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Operator enables remoted <connection>syslog</connection> (or monitors ASL logs).\n2. Attacker sends two ASL-shaped events with Message ossec: output: 'netstat -tan': A then B, and Host ../../etc/shared.\n3. analysisd decodes as ossec; rule 533 check_diff calls doDiff.\n4. _add2last creates etc/shared/533/last-entry (in chroot) with attacker log bytes.",
+      "evidence": [
+        "src/analysisd/dodiff.c:14-66",
+        "src/analysisd/dodiff.c:81-102",
+        "src/analysisd/cleanevent.c:431-447",
+        "src/os_regex/os_regex_maps.c:13-22",
+        "etc/ossec_decoders/ossec_decoders.xml:30-32",
+        "etc/rules/ossec_rules.xml:163-167",
+        "src/addagent/validate.c:369-387"
+      ],
+      "remediation": "Sanitize or hash hostname before path join; reject '/', '..', and non-allowlisted bytes. Keep check_diff storage under a fixed per-agent-id directory.",
+      "poc_video_notes": "Validated path normalization queue/diff/../../etc/shared/533/last-entry -> etc/shared/533/last-entry with local mkdir/fwrite replica. Confirmed traditional syslog same-line host+ossec: fails decoder after program_name strip. No live analysisd/syslog lab in this at-rest scan."
+    }
+  ],
+  "near_misses": [
+    "Syscheck DB_File / rootcheck RK_File ../ need intermediate (name) ip->.. dir",
+    "seechanges system(diff) escapes; report_changes opt-in; no / in dirents",
+    "mysql/pgsql/mssql strncat room checks hold; no journal reader in tree",
+    "logcollector command= remote_commands default 0",
+    "Linux execd execv + CRAFTED_IP/USER; Win CreateProcess already filed",
+    "AR slack already filed; tweeter excluded; host-deny/firewall-drop/ip-customblock allowlisted",
+    "doDiff agent (name) alphanumeric only — no slash",
+    "Traditional syslog hostname+/ + ossec: same-line does not hit rule 533 (program_name strip)"
+  ],
+  "dodiff_validation": {
+    "real_code_bug": true,
+    "distinct_from_uaf": true,
+    "distinct_from_ossecalert": true,
+    "stock_syslog_same_line_chain": false,
+    "stock_asl_host_chain": true,
+    "severity_with_asl_or_custom_check_diff": "medium"
+  }
+}
