@@ -1,0 +1,64 @@
+{
+  "hunt": "scoped-authz-injection-path-hunt-2026-11-20",
+  "commit": "cebf1db2e0c9f5eaca05fdb7c266be5309851939",
+  "result": "none",
+  "findings": [],
+  "near_misses": [
+    {
+      "title": "host-deny CRAFTED_IP colon enables :allow option in hosts.deny",
+      "severity_if_promoted": "medium",
+      "reason_rejected": "libwrap uncommon on modern sshd; sabotage not RCE; depends on already-flagged Wazuh [id] local AR misroute"
+    },
+    {
+      "title": "disable-account.sh unquoted USER allows leading-dash option confusion",
+      "severity_if_promoted": "medium",
+      "reason_rejected": "command defined but not default-bound to any active-response"
+    },
+    {
+      "title": "DB_File/RK_File lf->location path with ../",
+      "severity_if_promoted": "high",
+      "reason_rejected": "fopen does not mkdir intermediate components under queue/syscheck|rootcheck"
+    },
+    {
+      "title": "UnmergeFiles follows ../ in merged member names",
+      "severity_if_promoted": "high",
+      "reason_rejected": "stock MergeAppendFile uses basename; requires hand-crafted merged.mg as admin/manager"
+    },
+    {
+      "title": "csyslog CEF/Splunk field break via comment/location",
+      "severity_if_promoted": "medium",
+      "reason_rejected": "non-default syslog_output; SIEM-semantic impact only"
+    },
+    {
+      "title": "maild Subject CRLF via OpenSCAP title",
+      "severity_if_promoted": "medium",
+      "reason_rejected": "full_subject defaults off; default subject truncates at > in ->"
+    },
+    {
+      "title": "contrib placeholder dbpasswd defaults",
+      "location_vars": [
+        "contrib/ossec2mysql.pl:94 $conf{dbpasswd}",
+        "contrib/ossec2mysqld.pl:95 $conf{dbpasswd}",
+        "contrib/ossec2snorby/ossec2snorby.pl:136 $conf{dbpasswd}",
+        "contrib/active-list.pl:23 $db_pass"
+      ],
+      "severity_if_promoted": "low",
+      "reason_rejected": "sample placeholders; no remote exploit chain; below MEDIUM bar"
+    },
+    {
+      "title": "wdb_update_pm SQL placeholder/bind mismatch",
+      "severity_if_promoted": "low",
+      "reason_rejected": "logic bug causing no-op/wrong update; not injectable"
+    }
+  ],
+  "already_flagged_in_scope_not_rereported": [
+    "integrator location/ruledescription shell source RCE",
+    "os_dbd location and PostgreSQL srcip/dstip SQLi",
+    "maild SMTP DATA smuggling",
+    "ossec2mysql/snorby/ossectop host $alerthost CMDi",
+    "ossec_ruleset.py HTTP zip-slip",
+    "Windows FILE_UPDATE backslash path escape",
+    "Wazuh [id] location local AR misroute",
+    "json_extended match_regex OOB / rootcheck key injection"
+  ]
+}
