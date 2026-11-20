@@ -1,0 +1,50 @@
+{
+  "repo": "ossec-wazuh",
+  "commit_hash": "27a9e6d57dfd4c00d03a9f17341eb913dfe63cb7",
+  "detected_at_utc": "2026-11-20T03:18:00Z",
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "src/shared/read-alert.c",
+      "title": "Multiline full_log smuggles fake Rule:/Alert headers into GetAlertData, yielding integrator shell RCE via ruledescription/alertlocation",
+      "description": "OS_Log writes lf->full_log into alerts.log with embedded newlines intact (%.1256s). GetAlertData then re-parses any subsequent line starting with 'Rule: ' or '** Alert' as structured fields, overwriting comment, and with a short header-reset sequence also location and alertid. ossec-integratord interpolates al_data->comment and al_data->location into ruledescription='%s' and alertlocation='%s' with no sanitization (unlike alertlog/srcip). Slack and PagerDuty integrations source that file as shell. A registered agent can send a secure event whose log contains a BAD_WORDS token (rule 1002) plus a smuggled Rule line such as Rule: 1002 (level 7) -> 'x'; cmd; y='', or a full mini-alert that resets location. This is distinct from location-suffix RCE and from description_append OpenSCAP title RCE: the agent controls the log body only, and any logged rule works.",
+      "impact": "Remote command execution as ossecm on the manager whenever Slack or PagerDuty (or a custom integration that sources the alert file) is enabled. That user can read manager state, alerts, and keys under the OSSEC tree and is a foothold to further compromise the HIDS.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Operator enables Slack or PagerDuty integration.\n2. Attacker has a registered agent key.\n3. Agent sends a LOCALFILE_MQ-shaped secure payload whose log is e.g. error failed\\nRule: 1002 (level 7) -> 'x'; id; y='' (or a full ** Alert / date / Rule mini-block to also overwrite location).\n4. Rule 1002 matches BAD_WORDS; OS_Log writes the multiline full_log into alerts.log.\n5. integratord GetAlertData overwrites comment (and optionally location); writes /tmp/<name>-*.alert with ruledescription='x'; id; y=''.\n6. integrations/slack or pagerduty runs . $ALERTFILE, executing the injected command as ossecm.",
+      "evidence": [
+        "src/analysisd/alerts/log.c:279-333",
+        "src/shared/read-alert.c:199-320",
+        "src/shared/read-alert.c:411-428",
+        "src/os_integrator/integrator.c:38",
+        "src/os_integrator/integrator.c:274",
+        "integrations/slack:35",
+        "integrations/pagerduty:35",
+        "etc/rules/syslog_rules.xml:35-38",
+        "etc/ossec.conf:79"
+      ],
+      "remediation": "Stop sourcing alert files as shell; pass fields via argv/env and parse as data. In GetAlertData, once the real Rule: line is parsed, treat all further lines as log body only (do not re-match Rule:/Src IP:/User:/** Alert). Strip CR/LF from full_log before OS_Log, or reject log lines that mimic alert metadata. Sanitize comment and location the same way alertlog/srcip are sanitized before writing integrator temp files.",
+      "distinctness": "Different root cause and trigger than integrator location-suffix RCE and description_append OpenSCAP comment RCE. Requires only a default logged rule plus newlines in full_log; no OpenSCAP ruleset and no quote in the agent location suffix."
+    },
+    {
+      "severity": "high",
+      "location": "src/os_dbd/alert.c",
+      "title": "os_dbd interpolates unsanitized alertid after GetAlertData header smuggling from full_log",
+      "description": "Both MySQL and PostgreSQL alert INSERT paths embed al_data->alertid in single-quoted SQL with no osdb_escapestr. alertid is normally manager-generated (time.ftell), but GetAlertData will overwrite it when full_log contains a smuggled '** Alert <id>:' line after a parse-error reset clears the prior date/location. A registered agent that triggers any logged alert can therefore place SQL metacharacters into alertid. PostgreSQL PQexec accepts stacked statements; MySQL is vulnerable to quote-break within the INSERT depending on client flags.",
+      "impact": "When ossec-dbd is enabled, an authenticated agent can perform SQL injection against the alert database via alertid, including stacked statements on PostgreSQL, corrupting or reading data allowed to the dbd role.",
+      "verified": true,
+      "status": "active",
+      "attack_path": "1. Operator enables ossec-dbd (MySQL or PostgreSQL).\n2. Attacker has a registered agent key.\n3. Agent sends a log that fires a default rule (e.g. rule 1002) whose full_log contains: a junk '** Alert' line, a line that forces GetAlertData l_error (clearing date), then '** Alert 1'; DROP TABLE alert;--: mail - g', a date/location line, a Rule line, and a log line.\n4. GetAlertData returns alertid=1'; DROP TABLE alert;--.\n5. OS_Alert_InsertDB snprintf's that value into the INSERT; osdb_query_insert/PQexec runs the injected SQL.",
+      "evidence": [
+        "src/shared/read-alert.c:199-243",
+        "src/shared/read-alert.c:253-277",
+        "src/shared/read-alert.c:433-500",
+        "src/os_dbd/alert.c:185-207",
+        "src/os_dbd/db_op.c:285-297",
+        "src/analysisd/alerts/log.c:279-333"
+      ],
+      "remediation": "Call osdb_escapestr on alertid (or use parameterized queries). Reject non [0-9.] alertids. Fix GetAlertData so log-body lines cannot reopen '** Alert' / Rule: parsing after the first Rule line.",
+      "distinctness": "Already-reported dbd SQLi covers unsanitized location and PostgreSQL srcip/dstip from decoders. This is a different column (alertid), normally trusted, made attacker-controlled only through read-alert field smuggling; MySQL is also affected for this field."
+    }
+  ]
+}
