@@ -1,0 +1,50 @@
+{
+  "findings": [
+    {
+      "severity": "high",
+      "location": "src/remoted/secure.c",
+      "title": "Dynamic !id! prefix underflow passes UINT_MAX into ReadSecMSG/OS_BF_Str before key auth.",
+      "description": "HandleSecureMessage strips !&lt;id&gt;! while decrementing recv_b, then calls ReadSecMSG(..., recv_b - 1) with an unsigned size. A frame that is exactly !&lt;id&gt;! leaves recv_b=0 so the size becomes 0xFFFFFFFF. The reused, non-NUL-terminated receive buffer retains a ':' from a prior !id!:ciphertext message at the strip offset, so ReadSecMSG proceeds into OS_BF_Str/BF_cbc_encrypt with that size and overflows stack cleartext_msg[OS_MAXSTR+1]. Only OS_IsAllowedDynamicID (agent id + IP/any) is required; the Blowfish key is never proven. Distinct from the known signed TCP length-prefix bug: this uses a valid positive UDP/TCP length equal to 2+len(id).",
+      "impact": "Remote stack buffer overflow in ossec-remoted (ossec user) on default secure remoted. Any network peer who can guess/learn an agent id with IP any (default authd without -i) or spoof a pinned agent IP can crash remoted and likely execute code, taking down secure event collection or yielding a foothold to read client.keys.",
+      "verified": true,
+      "status": "active",
+      "background_composer_id": "",
+      "commit_hash": "27a9e6d57dfd4c00d03a9f17341eb913dfe63cb7",
+      "detected_at_pst": "2026-11-19T19:18:00-08:00",
+      "reported_link": "",
+      "attack_path": "1. Manager runs secure remoted (default).\n2. An agent exists with IP any (authd without -i) or attacker can UDP-spoof a pinned agent IP.\n3. Attacker learns/guesses the agent id.\n4. Prior traffic or a prime packet leaves ':' at index 2+len(id) in remoted's receive buffer.\n5. Attacker sends exactly !<id>! (UDP or TCP with length=2+len(id)).\n6. ReadSecMSG decrypts with size UINT_MAX into a stack buffer → crash/RCE as ossec.",
+      "evidence": [
+        "src/remoted/secure.c:223-262",
+        "src/remoted/secure.c:191-198",
+        "src/os_crypto/shared/msgs.c:185-197",
+        "src/os_crypto/blowfish/bf_op.c:24-36",
+        "src/os_crypto/shared/keys.c:408-424",
+        "src/addagent/validate.c:92-93"
+      ],
+      "remediation": "After stripping !id!, require 1 <= remaining_len <= OS_MAXSTR before ReadSecMSG. Pass the remaining ciphertext length explicitly; do not compute recv_b-1 after mutating recv_b. NUL-terminate the receive buffer at recv_b. Cap OS_BF_Str to the cleartext buffer size.",
+      "poc_video_notes": "No live remoted lab. Local C replica of !id! accounting produced buffer_size=0xffffffff for !001!. Python leftover-buffer simulation showed prior !001!:... plus short !001! leaves ':' at the strip offset so the format check passes."
+    },
+    {
+      "severity": "high",
+      "location": "src/remoted/syslogtcp.c",
+      "title": "Syslog-TCP remoted treats OS_RecvTCPBuffer success (0) as byte count, overflowing storage_buffer via strncat.",
+      "description": "OS_RecvTCPBuffer returns 0 on success and -1 on failure (confirmed by unit tests), not the recv size. HandleClient stores the return in r_sz and uses it as a length: the full-buffer guard (sb_size - r_sz) <= 2 never trips, and sb_size -= r_sz never shrinks. Chunks without newlines are strncat'd into storage_buffer[OS_MAXSTR+2] until the stack overflows. Requires remoted syslog+TCP with the attacker in allowed-ips.",
+      "impact": "Unauthenticated stack overflow in the forked syslog-TCP remoted child as the remoted user whenever syslog TCP collection is enabled and the source IP is allowed. Crash is certain; code execution is plausible and yields a foothold on the manager HIDS host.",
+      "verified": true,
+      "status": "active",
+      "background_composer_id": "",
+      "commit_hash": "27a9e6d57dfd4c00d03a9f17341eb913dfe63cb7",
+      "detected_at_pst": "2026-11-19T19:18:00-08:00",
+      "reported_link": "",
+      "attack_path": "1. Operator configures remoted connection=syslog and protocol=tcp with allowed-ips covering the attacker (common for device log collection).\n2. Attacker connects to the syslog TCP port.\n3. Attacker sends repeated ~100-byte chunks with no newline.\n4. HandleClient keeps strncat'ing; sb_size never decreases.\n5. After ~62 chunks storage_buffer overflows → crash/RCE as ossec.",
+      "evidence": [
+        "src/os_net/os_net.c:384-392",
+        "src/tests/test_os_net.c:43",
+        "src/remoted/syslogtcp.c:56-77",
+        "src/remoted/remoted.c:76-78"
+      ],
+      "remediation": "Make OS_RecvTCPBuffer return the received length (or an out-parameter) and update HandleClient accordingly. Bound appends by remaining capacity from strlen(storage_buffer) versus sizeof(storage_buffer).",
+      "poc_video_notes": "No live syslog-TCP remoted lab. Local simulation of r_sz=0 + strncat of 100-byte chunks overflowed past OS_MAXSTR+2 at iteration 61. Unit test confirms OS_RecvTCPBuffer returns 0 on success."
+    }
+  ]
+}
